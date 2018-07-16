@@ -9,14 +9,15 @@ import com.cloudbees.plugins.credentials.CredentialsProvider;
 import com.cloudbees.plugins.credentials.domains.URIRequirementBuilder;
 import hudson.Extension;
 import hudson.model.AbstractProject;
+import hudson.model.Job;
 import hudson.model.Cause;
+import hudson.model.CauseAction;
 import hudson.model.Executor;
 import hudson.model.Item;
 import hudson.model.ParameterDefinition;
 import hudson.model.ParametersAction;
 import hudson.model.ParametersDefinitionProperty;
 import hudson.model.ParameterValue;
-import hudson.model.queue.QueueTaskFuture;
 import hudson.model.Queue;
 import hudson.model.Result;
 import hudson.model.Run;
@@ -48,7 +49,7 @@ import static com.cloudbees.plugins.credentials.CredentialsMatchers.instanceOf;
 import org.jenkinsci.plugins.bbprb.bitbucket.ApiClient;
 import org.jenkinsci.plugins.bbprb.bitbucket.BuildState;
 
-public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
+public class BitbucketBuildTrigger extends Trigger<Job<?, ?>> {
   private final String ciKey;
   private final String ciName;
   private final String credentialsId;
@@ -93,7 +94,7 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
   }
 
   @Override
-  public void start(AbstractProject<?, ?> project, boolean newInstance) {
+  public void start(Job<?, ?> project, boolean newInstance) {
     logger.log(Level.FINE, "Started for `{0}`", project.getFullName());
 
     super.start(project, newInstance);
@@ -135,6 +136,16 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
     }
   }
 
+  private ParameterizedJobMixIn retrieveScheduleJob(final Job<?, ?> job) {
+    // TODO 1.621+ use standard method
+    return new ParameterizedJobMixIn() {
+      @Override
+      protected Job asJob() {
+        return job;
+      }
+    };
+  }
+
   private void startJob(BitbucketCause cause) {
     if (this.cancelOutdatedJobs) {
       SecurityContext orig = ACL.impersonate(ACL.SYSTEM);
@@ -145,9 +156,10 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
 
     setPRState(cause, BuildState.INPROGRESS, this.job.getUrl());
 
-    this.job.scheduleBuild2(
-        0, cause, new ParametersAction(this.getDefaultParameters()),
-        new RevisionParameterAction(cause.getSourceCommitHash()));
+    retrieveScheduleJob(this.job).scheduleBuild2(0,
+            new CauseAction(cause),
+            new ParametersAction(this.getDefaultParameters()),
+            new RevisionParameterAction(cause.getSourceCommitHash()));
   }
 
   private void
@@ -176,6 +188,13 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
   abortRunningJobsThatMatch(@Nonnull BitbucketCause bitbucketCause) {
     logger.log(Level.FINE, "Looking for running jobs that match PR #{0}",
                bitbucketCause.getPullRequestId());
+    logger.log(Level.FINE, "Me Testing here");
+    if (job == null || job.getBuilds() == null) {
+        logger.log(Level.FINE, "There are no jobs that match PR #{0}",
+            bitbucketCause.getPullRequestId());
+        return;
+    }
+
     for (Object o : job.getBuilds()) {
       if (o instanceof Run) {
         Run build = (Run)o;
@@ -237,6 +256,13 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
   }
 
   public void handlePR(JSONObject pr) {
+    logger.log(Level.FINE,
+            "Handling this job, is the job not null? {0}",
+            (this.job != null));
+    if (this.job == null) {
+      return;
+    }
+
     JSONObject src = pr.getJSONObject("source");
     JSONObject dst = pr.getJSONObject("destination");
     String dstRepository =
@@ -270,7 +296,7 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
 
     @Override
     public boolean isApplicable(Item item) {
-      return item instanceof AbstractProject;
+      return item instanceof Job;
     }
 
     @Override
@@ -294,4 +320,10 @@ public class BitbucketBuildTrigger extends Trigger<AbstractProject<?, ?>> {
   }
   private static final Logger logger =
       Logger.getLogger(BitbucketBuildTrigger.class.getName());
+
+  public static BitbucketBuildTrigger getTrigger(AbstractProject project) {
+      Trigger trigger = project.getTrigger(BitbucketBuildTrigger.class);
+      return (BitbucketBuildTrigger)trigger;
+  }
+
 }
