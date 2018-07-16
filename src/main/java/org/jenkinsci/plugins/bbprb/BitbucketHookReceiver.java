@@ -1,5 +1,6 @@
 package org.jenkinsci.plugins.bbprb;
 
+import com.google.common.collect.Sets;
 import hudson.Extension;
 import hudson.model.UnprotectedRootAction;
 import hudson.security.ACL;
@@ -11,6 +12,7 @@ import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.servlet.FilterChain;
@@ -93,9 +95,10 @@ public class BitbucketHookReceiver
                "Received commit hook notification, key: `{0}`, body: `{1}`",
                new Object[] {event, body});
 
+    Set<String> validEvents = Sets.newHashSet("pullrequest:created", "pullrequest:updated", "pullrequest:comment_created");
     try {
       JSONObject payload = JSONObject.fromObject(body);
-      if (event.startsWith("pullrequest:")) {
+      if (validEvents.contains(event)) {
         JSONObject pr = payload.getJSONObject("pullrequest");
         String state = pr.getString("state");
         if (!"OPEN".equals(state)) {
@@ -103,6 +106,20 @@ public class BitbucketHookReceiver
               Level.INFO, "Ignoring closed PR ({0}): #{1} {2}",
               new Object[] {state, pr.getInt("id"), pr.getString("title")});
           return;
+        }
+
+        if (event.equals("pullrequest:comment_created")) {
+          LOGGER.log(Level.INFO, "Checking for comment...");
+          JSONObject comment = payload.getJSONObject("comment");
+          if (comment != null) {
+            LOGGER.log(Level.INFO, "Got comment");
+            String content = comment.getJSONObject("content").getString("raw");
+            LOGGER.log(Level.INFO, "Raw content is: {0}", content);
+            if (!content.toLowerCase().contains("test this please")) {
+              LOGGER.log(Level.INFO, "Content doesn't match, skipping");
+              return;
+            }
+          }
         }
         for (BitbucketBuildTrigger trigger : getBitbucketTriggers()) {
           trigger.handlePR(pr);
